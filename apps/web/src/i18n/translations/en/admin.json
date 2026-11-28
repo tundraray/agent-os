@@ -7,7 +7,8 @@
     "sign-in": "Sign-in",
     "servers": "MCP servers",
     "models": "Models",
-    "library": "Agents and deep agents"
+    "library": "Library",
+    "instructions": "Agent instructions"
   },
   "table": {
     "retry": "Retry",
@@ -359,7 +360,7 @@
       "shared": "Shared with roles",
       "bans": "Blocks"
     },
-    "record": "Agent or deep agent",
+    "record": "Name",
     "kind": "Type",
     "audience": "Seen by",
     "version": "Version",
@@ -384,7 +385,7 @@
     "rolesLine": "<label>Roles:</label> {roles}",
     "close": "Close access",
     "closeTitle": "Close access to “{name}”?",
-    "closeBody": "The {kind, select, agent {agent} other {deep agent}} becomes private to its author, {author}: {roleCount, plural, one {the {roles} role will no longer see it} other {the roles {roles} will no longer see it}}. The author can't share it again until you lift the block. Runs already in progress will finish.",
+    "closeBody": "The {kind, select, agent {agent} skill {skill} other {deep agent}} becomes private to its author, {author}: {roleCount, plural, one {the {roles} role will no longer see it} other {the roles {roles} will no longer see it}}. The author can't share it again until you lift the block. Runs already in progress will finish.",
     "closed": "Access closed",
     "settings": {
       "title": "New record settings",
@@ -706,5 +707,10 @@
       "personal": "Personal",
       "from": "From"
     }
+  },
+  "instructions": {
+    "description": "Every employee’s agents receive this text at every step.",
+    "warning": "An employee can see this text through their agent. Do not put passwords, tokens or other secrets here.",
+    "placeholder": "For example: file tickets in the OPS project. The “cashier” service is called payments in the logs."
   }
 }

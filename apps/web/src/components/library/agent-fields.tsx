@@ -13,6 +13,8 @@ import {
   RECORD_MAX_TURNS_MIN,
   RECORD_NAME_MAX_LENGTH,
   RECORD_PROMPT_MAX_LENGTH,
+  RECORD_SKILLS_MAX,
+  SKILL_TEXT_MAX_LENGTH,
   type AgentContent,
   type ModelUnavailableReason,
   type RecordSummary,
@@ -56,7 +58,10 @@ import {
 import { formatModel, formatRecordModel } from '@/lib/agents/format';
 import type { FormatsTranslator, ModelsTranslator } from '@/i18n/catalog';
 import type { Locale } from '@/i18n/pick-locale';
-import type { AgentDefinition } from '@/lib/library/record-rules';
+import type {
+  AgentDefinition,
+  SkillDefinition,
+} from '@/lib/library/record-rules';
 import { cn } from 'cn';
 import { RecordLabel } from './record-label';
 
@@ -71,6 +76,9 @@ type Check =
   | 'enterDescription'
   | 'descriptionTooLong'
   | 'enterPrompt'
+  | 'enterSteps'
+  | 'stepsTooLong'
+  | 'tooManySkills'
   | 'wholeNumber';
 
 /** A check's message, translated where the field shows it; the limits are the contract's named constants. */
@@ -79,6 +87,10 @@ function CheckText({ check }: { check: Check }) {
   switch (check) {
     case 'descriptionTooLong':
       return t('descriptionTooLong', { max: RECORD_DESCRIPTION_MAX_LENGTH });
+    case 'stepsTooLong':
+      return t('stepsTooLong', { max: SKILL_TEXT_MAX_LENGTH });
+    case 'tooManySkills':
+      return t('tooManySkills', { max: RECORD_SKILLS_MAX });
     case 'wholeNumber':
       return t('wholeNumber', {
         min: RECORD_MAX_TURNS_MIN,
@@ -98,7 +110,9 @@ export type AgentField =
   | 'servers'
   | 'model'
   | 'maxTurns'
-  | 'agents';
+  | 'agents'
+  | 'skills'
+  | 'steps';
 
 export type AgentFieldErrors = Partial<Record<AgentField, ReactNode>>;
 
@@ -170,8 +184,29 @@ export function validateAgent(values: AgentDefinition): AgentFieldErrors {
   ) {
     errors.maxTurns = failed('wholeNumber');
   }
+  // MC-14: the limit is checked before sending, as a field error.
+  if (values.content.skills.length > RECORD_SKILLS_MAX)
+    errors.skills = failed('tooManySkills');
   return errors;
 }
+
+/** The checks of a skill before sending (agent-guidance MC-12); limits are the contract's named constants. */
+export function validateSkill(values: SkillDefinition): AgentFieldErrors {
+  const errors: AgentFieldErrors = validateRecordText(values);
+  const steps = values.content.text;
+  if (steps.trim() === '') errors.steps = failed('enterSteps');
+  else if (steps.length > SKILL_TEXT_MAX_LENGTH)
+    errors.steps = failed('stepsTooLong');
+  return errors;
+}
+
+/** The form of a new skill (agent-guidance SK-02). */
+export const BLANK_SKILL: SkillDefinition = {
+  name: '',
+  description: '',
+  kind: 'skill',
+  content: { text: '' },
+};
 
 /** The form of a new agent with the defaults already set (UXRD ED-01). */
 export function blankAgent({
@@ -325,6 +360,14 @@ export function AgentFields({
         error={errors.servers}
         onChange={(servers) => setContent({ servers }, 'servers')}
       />
+      <AgentsField
+        id={`${id}-skills`}
+        kind="skill"
+        recordId={recordId}
+        chosen={content.skills}
+        error={errors.skills}
+        onChange={(skills) => setContent({ skills }, 'skills')}
+      />
       <CollapsibleRoot
         open={advancedOpen || advancedError}
         onOpenChange={setAdvancedOpen}
@@ -361,6 +404,7 @@ export function AgentFields({
           />
           <AgentsField
             id={`${id}-agents`}
+            kind="agent"
             recordId={recordId}
             chosen={content.agents}
             error={errors.agents}
@@ -368,6 +412,58 @@ export function AgentFields({
           />
         </CollapsibleContent>
       </CollapsibleRoot>
+    </>
+  );
+}
+
+export type SkillFieldsProps = {
+  values: SkillDefinition;
+  onChange: (values: SkillDefinition, field: AgentField) => void;
+  errors: AgentFieldErrors;
+};
+
+/**
+ * The skill's fields of the record editor (skill-record.md, «Редактор»; agent-guidance MC-11): name, «Когда
+ * применять» and «Шаги» with counters by the contract's limits; past a limit the text is typed and refused on save.
+ */
+export function SkillFields({ values, onChange, errors }: SkillFieldsProps) {
+  const id = useId();
+  const t = useTranslations('library');
+  return (
+    <>
+      <TextField
+        id={`${id}-name`}
+        label={t('fields.name')}
+        value={values.name}
+        max={RECORD_NAME_MAX_LENGTH}
+        error={errors.name}
+        onChange={(name) => onChange({ ...values, name }, 'name')}
+      />
+      <TextField
+        id={`${id}-description`}
+        label={t('fields.whenToUse')}
+        hint={t('skillFields.whenToUseHint')}
+        value={values.description}
+        max={RECORD_DESCRIPTION_MAX_LENGTH}
+        enforceMax={false}
+        multiline
+        error={errors.description}
+        onChange={(description) =>
+          onChange({ ...values, description }, 'description')
+        }
+      />
+      <TextField
+        id={`${id}-steps`}
+        label={t('fields.steps')}
+        hint={t('skillFields.stepsHint')}
+        value={values.content.text}
+        max={SKILL_TEXT_MAX_LENGTH}
+        enforceMax={false}
+        multiline
+        long
+        error={errors.steps}
+        onChange={(text) => onChange({ ...values, content: { text } }, 'steps')}
+      />
     </>
   );
 }
@@ -855,18 +951,36 @@ function MaxTurnsField({
 
 type AgentsFieldProps = {
   id: string;
+  /** The kind of record the field chooses: «Может запускать» agents, or «Скиллы» (skill-picker.md). */
+  kind: 'agent' | 'skill';
   recordId: string | null;
   chosen: readonly string[];
   error: ReactNode;
   onChange: (agents: string[]) => void;
 };
 
+/** The words of the field by the kind it chooses (UXRD MC-7, agent-guidance MC-14). */
+const PICKER_TEXT = {
+  agent: {
+    label: 'fields.agents',
+    find: 'agentFields.findAgent',
+    none: 'agentFields.noAgents',
+  },
+  skill: {
+    label: 'fields.skills',
+    find: 'skillFields.find',
+    none: 'skillFields.none',
+  },
+} as const;
+
 /**
- * «Может запускать»: a search over the agents the author sees (`libraryIndex`) and the chosen ones as record
- * label chips. A chosen agent missing from the read list is unavailable to the author; it stays until removed.
+ * «Может запускать» or «Скиллы» (skill-picker.md): a search over the records of the kind the author sees
+ * (`libraryIndex`), by name only, and the chosen ones as record label chips. A chosen record missing from the read
+ * list is unavailable to the author; it stays until removed.
  */
-function AgentsField({
+export function AgentsField({
   id,
+  kind,
   recordId,
   chosen,
   error,
@@ -878,17 +992,17 @@ function AgentsField({
   const locale = useLocale();
   const inputRef = useRef<HTMLInputElement>(null);
   const errorId = `${id}-error`;
+  const hintId = kind === 'skill' ? `${id}-hint` : null;
+  const text = PICKER_TEXT[kind];
 
   const candidates = useMemo(
     () =>
       records === null
         ? []
         : [...records.values()]
-            .filter(
-              (record) => record.kind === 'agent' && record.id !== recordId,
-            )
+            .filter((record) => record.kind === kind && record.id !== recordId)
             .sort((a, b) => a.name.localeCompare(b.name, locale)),
-    [records, recordId, locale],
+    [records, kind, recordId, locale],
   );
   const selected = candidates.filter((record) => chosen.includes(record.id));
 
@@ -907,8 +1021,13 @@ function AgentsField({
   return (
     <Field data-invalid={error !== undefined} className="gap-1.5">
       <FieldLabel htmlFor={id} className={LABEL}>
-        {t('fields.agents')}
+        {t(text.label)}
       </FieldLabel>
+      {hintId !== null && (
+        <FieldDescription id={hintId} className={HINT}>
+          {t('skillFields.hint')}
+        </FieldDescription>
+      )}
       <Combobox.Root
         multiple
         items={candidates}
@@ -923,9 +1042,12 @@ function AgentsField({
           id={id}
           ref={inputRef}
           render={<Input className="max-w-90 pointer-coarse:h-11" />}
-          placeholder={t('agentFields.findAgent')}
+          placeholder={t(text.find)}
           aria-invalid={error !== undefined}
-          aria-describedby={error === undefined ? undefined : errorId}
+          aria-describedby={describedBy(
+            hintId,
+            error === undefined ? null : errorId,
+          )}
         />
         <Combobox.Portal>
           <Combobox.Positioner sideOffset={4} className="isolate z-50">
@@ -936,7 +1058,7 @@ function AgentsField({
                   'px-2 py-1.5 text-muted-foreground empty:hidden',
                 )}
               >
-                {t('agentFields.noAgents')}
+                {t(text.none)}
               </Combobox.Empty>
               <Combobox.List>
                 {(record: RecordSummary) => (
@@ -972,6 +1094,7 @@ function AgentsField({
                   />
                 ) : (
                   <GoneChip
+                    kind={kind}
                     loading={records === null}
                     onRemove={() => remove(agentId)}
                   />
@@ -988,17 +1111,19 @@ function AgentsField({
   );
 }
 
-/** A chosen agent the read list does not hold: unavailable to the author, or the list is still being read. */
+/** A chosen record the read list does not hold: unavailable to the author, or the list is still being read. */
 function GoneChip({
+  kind,
   loading,
   onRemove,
 }: {
+  kind: 'agent' | 'skill';
   loading: boolean;
   onRemove: () => void;
 }): ReactNode {
   const t = useTranslations('library.label');
   if (loading) return <Skeleton aria-hidden className="h-7 w-28" />;
-  const gone = t('unavailable', { kind: 'agent' });
+  const gone = t('unavailable', { kind });
   return (
     <span
       role="group"

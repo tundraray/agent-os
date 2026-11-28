@@ -24,6 +24,7 @@ const labelsOf = (before: AgentDefinition, after: AgentDefinition): string[] =>
 const MODEL = 'anthropic/claude-haiku-4-5';
 
 const inChat = (fields: {
+  kind?: RecordSummary['kind'];
   builtinKey?: string | null;
   mine?: boolean;
   offerInChat?: boolean;
@@ -114,6 +115,11 @@ describe('web rules (design-web.md, «Правила веба»)', () => {
       false,
     ],
     ['in chat: own record → yes', () => inChat({ mine: true }), true],
+    [
+      'in chat: an own skill offered in chat → no (agent-guidance DC-9)',
+      () => inChat({ kind: 'skill', mine: true, offerInChat: true }),
+      false,
+    ],
     [
       "in chat: colleague's record offered in chat → yes",
       () => inChat({ offerInChat: true }),

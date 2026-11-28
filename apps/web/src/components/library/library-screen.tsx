@@ -21,7 +21,7 @@ import { focusShellTarget } from '@/lib/focus';
 import { builtinName } from '@/i18n/builtin-name';
 import type { Locale } from '@/i18n/pick-locale';
 import { libraryApi } from '@/lib/library/library-api';
-import { newAgentPath } from '@/lib/shell-route';
+import { newRecordPath } from '@/lib/shell-route';
 import { LibraryRow } from './library-row';
 import { useInChat } from './use-in-chat';
 
@@ -237,13 +237,14 @@ function LoadingGroups() {
 }
 
 /**
- * «Создать в чате» and «Заполнить форму» from 768 px; below it both in the menu «+» (MC-1). The form is the
- * agent's only: a deep agent is created in the chat (deep-agents UXRD DA-01).
+ * «Создать в чате», «Заполнить форму» and «Новый скилл» from 768 px; below it all three in the menu «+» (MC-1,
+ * agent-guidance MC-10). A deep agent has no form: it is created in the chat (deep-agents UXRD DA-01).
  */
 function CreateActions({ onCreateInChat }: { onCreateInChat: () => void }) {
   const router = useRouter();
   const t = useTranslations('library');
-  const openForm = () => router.push(newAgentPath());
+  const openForm = () => router.push(newRecordPath('agent'));
+  const newSkill = () => router.push(newRecordPath('skill'));
   return (
     <>
       <div className="hidden items-center gap-2 md:flex">
@@ -252,6 +253,9 @@ function CreateActions({ onCreateInChat }: { onCreateInChat: () => void }) {
         </Button>
         <Button variant="outline" size="sm" onClick={openForm}>
           {t('screen.fillForm')}
+        </Button>
+        <Button variant="outline" size="sm" onClick={newSkill}>
+          {t('screen.newSkill')}
         </Button>
       </div>
       <DropdownMenu>
@@ -273,6 +277,9 @@ function CreateActions({ onCreateInChat }: { onCreateInChat: () => void }) {
           </DropdownMenuItem>
           <DropdownMenuItem onClick={openForm}>
             {t('screen.agentForm')}
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={newSkill}>
+            {t('screen.newSkill')}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

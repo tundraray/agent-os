@@ -106,10 +106,10 @@
     "selfLearning": "The deep agent learns: it remembers what this run finds, and other employees' runs get it."
   },
   "recordCard": {
-    "create": "{kind, select, agent {Create agent} other {Create deep agent}}",
+    "create": "{kind, select, agent {Create agent} skill {Create skill} other {Create deep agent}}",
     "edit": "Change “{name}”",
     "delete": "Delete “{name}”",
-    "deleteNote": "The {kind, select, agent {agent} other {deep agent}} will be removed from the library. This can't be undone.",
+    "deleteNote": "The {kind, select, agent {agent} skill {skill} other {deep agent}} will be removed from the library. This can't be undone.",
     "changed": "changed",
     "new": "new",
     "removed": "Removed: {what}",
@@ -244,5 +244,20 @@
   "fork": {
     "from": "Forked from “<link>{title}</link>”",
     "fromDeleted": "Forked from a deleted conversation"
+  },
+  "instructions": {
+    "title": "How to work with me",
+    "description": "Your agents read this text at every step — in chat, in schedules and in training. Only you can see it.",
+    "empty": "Empty: agents won’t get a personal instruction",
+    "placeholder": "For example: I’m an SRE on the payments team. Answer briefly, give commands for bash.",
+    "save": "Save",
+    "edit": "Edit",
+    "reject": "Decline",
+    "saveEdited": "Save with edits",
+    "cancel": "Cancel",
+    "saved": "Saved · {time}",
+    "rejected": "Declined · {time}",
+    "notSaved": "Not saved: {reason}",
+    "cancelled": "Not needed"
   }
 }

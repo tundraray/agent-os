@@ -1,11 +1,14 @@
 import { createStore, type StoreApi } from 'zustand/vanilla';
 
 /**
- * What the unsaved changes on screen are: a library record by its name (MC-11), or access levels by the number of
- * changed rows (access-levels UXRD MC-37); the dialog words its question by it.
+ * What the unsaved changes on screen are: a library record by its name (MC-11), access levels by the number of
+ * changed rows (access-levels UXRD MC-37), or an instruction by its section's title (agent-guidance MC-9); the
+ * dialog words its question by it.
  */
 export type LeaveSubject =
-  { kind: 'record'; name: string } | { kind: 'access'; changes: number };
+  | { kind: 'record'; name: string }
+  | { kind: 'access'; changes: number }
+  | { kind: 'instructions'; title: string };
 
 export type LeaveGuardState = {
   /** The unsaved changes on screen; `null` — nothing is held. */

@@ -55,6 +55,7 @@ import {
   OfferCard,
   PlanCard,
 } from '@/components/agents/decision-card';
+import { InstructionsCard } from '@/components/agents/instructions-card';
 import { QuestionCard } from '@/components/agents/question-card';
 import {
   EventLine,
@@ -108,6 +109,7 @@ import { cn } from '@/lib/utils';
 import {
   AGENTS_QUESTION_CONFIRMATION,
   ChipRecordSchema,
+  IDENTITY_INSTRUCTIONS_CONFIRMATION,
   ScheduleMarkSchema,
   type ChipRecord,
   type DecisionRequest,
@@ -731,6 +733,14 @@ const DecisionPart: DataMessagePartComponent<DecisionPartData> = ({ data }) => {
       <QuestionCard
         confirmation={data.confirmation}
         byChat={data.byChat}
+        onDecide={onDecide}
+      />
+    );
+  if (data.confirmation.kind === IDENTITY_INSTRUCTIONS_CONFIRMATION)
+    return (
+      <InstructionsCard
+        confirmation={data.confirmation}
+        saved={data.saved}
         onDecide={onDecide}
       />
     );

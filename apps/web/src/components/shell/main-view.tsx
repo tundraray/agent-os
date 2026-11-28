@@ -127,7 +127,9 @@ export function MainView() {
   if (route.kind === 'library' && route.page.kind === 'record')
     return <RecordPage key={route.page.id} id={route.page.id} />;
   if (route.kind === 'library' && route.page.kind === 'new')
-    return <NewRecordPage />;
+    return (
+      <NewRecordPage key={route.page.recordKind} kind={route.page.recordKind} />
+    );
   if (route.kind === 'schedules') return <SchedulesScreen />;
   // A new key per schedule: the dialogs and the history of one never carry over to the next.
   if (route.kind === 'schedule')

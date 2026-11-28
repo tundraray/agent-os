@@ -20,7 +20,8 @@ import { useShellServices } from './shell-actions';
 /**
  * The one question before leaving unsaved changes, mounted once by the shell: it shows the open question of
  * `leaveGuard` and answers it. The focus starts on «Остаться»; Esc answers the same. A library record is named
- * (UXRD MC-11; a new one without a name gets the text without it), access levels are counted (access-levels MC-37).
+ * (UXRD MC-11; a new one without a name gets the text without it), access levels are counted (access-levels MC-37),
+ * an instruction is named by its section (agent-guidance MC-9).
  */
 export function LeaveGuardDialog() {
   const t = useTranslations('shell.leaveGuard');
@@ -33,6 +34,8 @@ export function LeaveGuardDialog() {
   const body = (): string => {
     if (shown?.kind === 'access')
       return t('bodyAccess', { count: shown.changes });
+    // MC-9 words an instruction's question as a record's, by the section's title.
+    if (shown?.kind === 'instructions') return t('body', { name: shown.title });
     const name = shown?.name.trim() ?? '';
     return name === '' ? t('bodyNew') : t('body', { name });
   };

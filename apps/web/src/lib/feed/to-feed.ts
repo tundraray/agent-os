@@ -8,7 +8,9 @@ import {
   DELETE_RECORD_TOOL,
   EDIT_RECORD_TOOL,
   LIBRARY_RECORD_CONFIRMATION,
+  IDENTITY_INSTRUCTIONS_CONFIRMATION,
   LibraryRecordCardSchema,
+  SET_PERSONAL_INSTRUCTIONS_TOOL,
   START_AGENT_TOOL,
   START_DEEP_AGENT_TOOL,
   type AgentNode,
@@ -201,7 +203,10 @@ export type DecisionPartData = {
   confirmation: Confirmation;
   /** The conversation's root asks: «Чат хочет выполнить:» (MC-19). */
   byChat: boolean;
-  /** How the call of an approved record card ended (DA-11); null before its result and for any other decision. */
+  /**
+   * How the call of an approved record card (DA-11) or personal instruction card (agent-guidance KD-8) ended; null
+   * before its result and for any other decision.
+   */
   saved: RecordSave | null;
 };
 
@@ -333,10 +338,14 @@ type LikePart = Exclude<ThreadMessageLike['content'], string>[number];
 type ToolCallLikePart = Extract<LikePart, { type: 'tool-call' }>;
 type JsonObject = NonNullable<ToolCallLikePart['args']>;
 
-/** Calls another feed piece already shows: a start — the run card or the brief card (MC-23). Only other outcomes draw a block. */
+/**
+ * Calls another feed piece already shows: a start — the run card or the brief card (MC-23); a personal instruction —
+ * its card (agent-guidance KD-8). Only other outcomes draw a block: no card, or a save that did not go through.
+ */
 const SHOWN_ELSEWHERE = new Set<string>([
   START_AGENT_TOOL,
   START_DEEP_AGENT_TOOL,
+  SET_PERSONAL_INSTRUCTIONS_TOOL,
 ]);
 const HIDDEN_OUTCOMES = new Set<ToolOutcome>(['success', 'rejected']);
 const ERROR_OUTCOMES = new Set<ToolOutcome>([
@@ -797,7 +806,8 @@ function descriptionOf(
 type FinishedCall = { tool: string; result: ToolResult; at: number };
 
 /**
- * How the call of an approved record card ended. The confirmation names no call, so the result is the first
+ * How the call of an approved record card or personal instruction card ended (agent-guidance KD-8). The
+ * confirmation names no call, so the result is the first
  * one of the same tool the feed's agent wrote after the decision: the conversation's root runs one call at a
  * time, and the call's result is written only once the employee has decided (design-agent-types.md, Flow 1).
  */
@@ -807,7 +817,8 @@ function recordSaveOf(
   calls: readonly FinishedCall[],
 ): RecordSave | null {
   if (
-    confirmation.kind !== LIBRARY_RECORD_CONFIRMATION ||
+    (confirmation.kind !== LIBRARY_RECORD_CONFIRMATION &&
+      confirmation.kind !== IDENTITY_INSTRUCTIONS_CONFIRMATION) ||
     confirmation.resolution?.approve !== true
   )
     return null;

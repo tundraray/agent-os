@@ -28,15 +28,16 @@ import { libraryApi } from '@/lib/library/library-api';
 import {
   canUseInChat,
   recipientNote,
-  type AgentRecord,
+  type EditorRecord,
 } from '@/lib/library/record-rules';
 import {
   adminRecordPath,
   libraryPath,
-  newAgentPath,
+  newRecordPath,
   recordPath,
+  type FormKind,
 } from '@/lib/shell-route';
-import { blankAgent } from './agent-fields';
+import { BLANK_SKILL, blankAgent } from './agent-fields';
 import { useCopyRecord } from './copy-record';
 import { AgentScripts } from './agent-script';
 import { DeepAgentCard, type DeepAgentRecord } from './deep-agent-card';
@@ -72,28 +73,29 @@ export function RecordPage({ id }: RecordPageProps) {
       <ThreadNotice variant="library-load-error" onRetry={record.reload} />
     );
   if (record.data === undefined) return <RecordSkeleton />;
-  // An own record its owner may edit: an agent opens in the editor, a deep agent in its card (DA-13); company
-  // records change only in the panel (Invariant 3).
+  // An own record its owner may edit: an agent or a skill opens in the editor (agent-guidance KD-5), a deep agent
+  // in its card (DA-13); company records change only in the panel (Invariant 3).
   if (record.data.mine && record.data.canEdit) {
     if (record.data.kind === 'deep_agent')
       return <OwnDeepAgentPage record={record.data} />;
-    // The editor of a skill comes with the web part of agent-guidance.
-    if (record.data.kind === 'agent')
-      return <EditorPage start={{ saved: record.data }} created={created} />;
+    return <EditorPage start={{ saved: record.data }} created={created} />;
   }
   return <RecordView record={record.data} />;
 }
 
-/** `/library/new/agent`: the empty agent editor; the library list is read on entry for «Может запускать». */
-export function NewRecordPage() {
+/**
+ * `/library/new/agent` and `/library/new/skill`: the empty editor; the library list is read on entry for «Может
+ * запускать» and «Скиллы».
+ */
+export function NewRecordPage({ kind }: { kind: FormKind }) {
   const { libraryIndex } = useShellServices();
-  const created = useCreatedHandoff(newAgentPath());
+  const created = useCreatedHandoff(newRecordPath(kind));
 
   useEffect(() => {
     void libraryIndex.refresh();
   }, [libraryIndex]);
 
-  return <EditorPage start="new" created={created} />;
+  return <EditorPage start={{ blank: kind }} created={created} />;
 }
 
 /**
@@ -105,7 +107,7 @@ function EditorPage({
   start,
   created,
 }: {
-  start: { saved: AgentRecord } | 'new';
+  start: { saved: EditorRecord } | { blank: FormKind };
   created: boolean;
 }) {
   const choices = useResource(libraryApi.choices, 'choices', 'library');
@@ -119,7 +121,16 @@ function EditorPage({
   return (
     <RecordEditor
       mode="employee"
-      source={start === 'new' ? { blank: blankAgent(choices.data) } : start}
+      source={
+        'saved' in start
+          ? start
+          : {
+              blank:
+                start.blank === 'skill'
+                  ? BLANK_SKILL
+                  : blankAgent(choices.data),
+            }
+      }
       choices={{ ...choices.data, models: models.data?.models }}
       created={created}
     />
@@ -156,7 +167,11 @@ function RecordView({ record }: { record: RecordDetail }) {
   const note = recipientNote(record);
   const recipient =
     note !== null && record.author !== null
-      ? { author: record.author.name, roles: note.roles }
+      ? {
+          author: record.author.name,
+          roles: note.roles,
+          offered: record.offerInChat,
+        }
       : null;
   const missingModel = record.missingRights.find(
     (right) => right.subagent === null && right.model !== null,
@@ -276,6 +291,9 @@ function RecordView({ record }: { record: RecordDetail }) {
           recipient={recipient}
           recordHref={recordPath}
           modelNames={modelNames}
+          connectedSkills={
+            record.kind === 'skill' ? undefined : record.connectedSkills
+          }
         />
         {record.kind === 'deep_agent' && (
           <AgentScripts scripts={record.content.scripts} />

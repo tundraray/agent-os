@@ -1,5 +1,5 @@
 {
-  "kind": "{kind, select, agent {agent} other {deep agent}}",
+  "kind": "{kind, select, agent {agent} skill {skill} other {deep agent}}",
   "cancel": "Cancel",
   "retry": "Retry",
   "open": "Open",
@@ -20,7 +20,8 @@
     "noRoles": "You have no roles, so there are no colleagues' agents here",
     "noCompany": "Nothing from the company for you",
     "failed": "Couldn't load the library",
-    "loading": "Loading the library…"
+    "loading": "Loading the library…",
+    "newSkill": "New skill"
   },
   "row": {
     "actions": "Actions: {name}",
@@ -44,20 +45,23 @@
     "model": "Model",
     "maxTurns": "Maximum steps",
     "agents": "Can start",
-    "selfLearning": "Self-learning"
+    "selfLearning": "Self-learning",
+    "whenToUse": "When to use",
+    "steps": "Steps",
+    "skills": "Skills"
   },
   "brief": {
     "title": "Brief",
     "titleNamed": "Brief · {name}"
   },
   "editor": {
-    "newTitle": "{kind, select, agent {New agent} other {New deep agent}}",
-    "created": "{kind, select, agent {Agent created} other {Deep agent created}}",
+    "newTitle": "{kind, select, agent {New agent} skill {New skill} other {New deep agent}}",
+    "created": "{kind, select, agent {Agent created} skill {Skill created} other {Deep agent created}}",
     "discarded": "Changes discarded",
     "restore": "Undo",
-    "onlyAdmins": "Only administrators can see the {kind, select, agent {agent} other {deep agent}} for now",
+    "onlyAdmins": "Only administrators can see the {kind, select, agent {agent} skill {skill} other {deep agent}} for now",
     "share": "Share",
-    "everyoneGets": "All employees see the {kind, select, agent {agent} other {deep agent}} — new runs will use the new version",
+    "everyoneGets": "All employees see the {kind, select, agent {agent} skill {skill} other {deep agent}} — new runs will use the new version",
     "launchHint": "To run it, press “Use in chat” or name the {kind, select, agent {agent} other {deep agent}} in chat.",
     "header": {
       "audience": "Who can see it: {who}",
@@ -78,7 +82,8 @@
       "discardShort": "Discard",
       "saveMine": "Save my changes",
       "takeSaved": "Take the saved version"
-    }
+    },
+    "skillHint": "Your chat reads the skill by itself when a task fits. For an agent to read it, connect the skill in the agent’s editor."
   },
   "agentFields": {
     "descriptionHint": "The chat decides when to call the agent from its description.",
@@ -102,7 +107,10 @@
       "enterDescription": "Enter a description",
       "descriptionTooLong": "The description is longer than {max} characters",
       "enterPrompt": "Enter instructions",
-      "wholeNumber": "Enter a whole number from {min} to {max}"
+      "wholeNumber": "Enter a whole number from {min} to {max}",
+      "enterSteps": "Enter the steps",
+      "stepsTooLong": "The steps are longer than {max} characters",
+      "tooManySkills": "You can connect at most {max} skills"
     }
   },
   "team": {
@@ -130,13 +138,14 @@
       "none": "none"
     },
     "expand": "Show all",
-    "collapse": "Collapse"
+    "collapse": "Collapse",
+    "recipientSkill": "The author is {author}.{roleCount, plural, =0 {} one { The skill is open to your role {roles}.} other { The skill is open to your roles {roles}.}}{offered, select, yes { Your chat reads it when a task fits.} other {}}"
   },
   "recordPage": {
     "colleagueHint": "Or name the {kind, select, agent {agent} other {deep agent}} in chat — the chat will start it itself.",
     "ownNamesake": "You have your own {kind, select, agent {agent} other {deep agent}} with this name: name it in chat and yours will start. To start this one, press “Use in chat”.",
     "severalNamesakes": "Several have this name: name it in chat and the one a colleague created earliest will start, a system one only when no other has the name. To start this one, press “Use in chat”.",
-    "readOnly": "The author opened the {kind, select, agent {agent} other {deep agent}} read-only: your chat doesn't start it. To use it, copy it to yourself.",
+    "readOnly": "{kind, select, skill {The author opened the skill read-only: your chat doesn’t read it. To have your chat read it, copy it to yourself.} other {The author opened the {kind, select, agent {agent} other {deep agent}} read-only: your chat doesn't start it. To use it, copy it to yourself.}}",
     "modelMissing": "The {model} model isn't available to you — the {kind, select, agent {agent} other {deep agent}} won't run for you. The copy gets your model.",
     "noModels": "The {model} model isn't available to you, and you have no other models — neither the {kind, select, agent {agent} other {deep agent}} nor its copy will run."
   },
@@ -144,11 +153,11 @@
     "mine": "yours",
     "company": "from the company",
     "onlyYou": "only you",
-    "unavailable": "{kind, select, agent {agent} other {deep agent}} unavailable",
+    "unavailable": "{kind, select, agent {agent} skill {skill} other {deep agent}} unavailable",
     "version": "· version {version}",
     "remove": "Remove: {name}",
     "spoken": {
-      "mine": "{kind, select, agent {your agent} other {your deep agent}}",
+      "mine": "{kind, select, agent {your agent} skill {your skill} other {your deep agent}}",
       "author": "author {name}",
       "version": "version {version}"
     }
@@ -161,15 +170,18 @@
     "confirm": "Copy",
     "saved": "Copy “{name}” saved",
     "noModels": "Copy “{name}” saved, but it won't run: no models are available to you",
-    "replaced": "The {from} model isn't available to you — {to} is set instead"
+    "replaced": "The {from} model isn't available to you — {to} is set instead",
+    "droppedSkills": "Skills you can’t see won’t be copied: {names}",
+    "removedSkills": "Skills you can’t see weren’t copied: {names}"
   },
   "delete": {
     "title": "Delete “{name}”?",
-    "everyone": "The {kind, select, agent {agent} other {deep agent}} will disappear for everyone it's open to. Runs already in progress will finish.",
-    "onlyYou": "The {kind, select, agent {agent} other {deep agent}} will be deleted for good. Runs already in progress will finish.",
-    "roles": "The {kind, select, agent {agent} other {deep agent}} will disappear for you and for {roleCount, plural, one {the {roles} role} other {these roles: {roles}}}. Runs already in progress will finish.",
+    "everyone": "{kind, select, skill {The skill will disappear for everyone it’s open to. Agents it is connected to will work without it.} other {The {kind, select, agent {agent} other {deep agent}} will disappear for everyone it's open to. Runs already in progress will finish.}}",
+    "onlyYou": "{kind, select, skill {The skill will be deleted for good. Agents it is connected to will work without it.} other {The {kind, select, agent {agent} other {deep agent}} will be deleted for good. Runs already in progress will finish.}}",
+    "roles": "{kind, select, skill {The skill will disappear for you and for {roleCount, plural, one {the {roles} role} other {these roles: {roles}}}. Agents it is connected to will work without it.} other {The {kind, select, agent {agent} other {deep agent}} will disappear for you and for {roleCount, plural, one {the {roles} role} other {these roles: {roles}}}. Runs already in progress will finish.}}",
     "confirm": "Delete",
-    "deleted": "{kind, select, agent {Agent} other {Deep agent}} deleted"
+    "deleted": "{kind, select, agent {Agent} skill {Skill} other {Deep agent}} deleted",
+    "skillAgents": "Agents it is connected to will work without it."
   },
   "share": {
     "title": "Share “{name}”",
@@ -193,7 +205,9 @@
     "nowEveryone": "Now all employees can see it",
     "rolesFailed": "Couldn't load roles",
     "noMatches": "No one found",
-    "usersFailed": "Couldn't find employees"
+    "usersFailed": "Couldn't find employees",
+    "offerSkill": "Their chat reads the skill",
+    "consequenceSkill": "Colleagues will see that the skill is from you."
   },
   "selfLearning": {
     "hint": "The agent remembers where it found what, and all its later runs see it — whoever starts them, even without access to those systems. What the agent remembered about an employee only that employee sees.",
@@ -374,5 +388,17 @@
     "agent": "Agent",
     "showDefinition": "Show definition",
     "hideDefinition": "Hide definition"
+  },
+  "kindTitle": "{kind, select, agent {Agent} skill {Skill} other {Deep agent}}",
+  "skillFields": {
+    "whenToUseHint": "The agent decides from this text whether to read the skill. Start with “When…”",
+    "stepsHint": "The procedure the agent follows once it has read the skill.",
+    "hint": "The agent reads a skill when the task fits its description.",
+    "find": "Find a skill…",
+    "none": "No skills found",
+    "dialogTitle": "Skills of “{name}”",
+    "saved": "Skills saved",
+    "change": "Change",
+    "hidden": "text not visible to you"
   }
 }

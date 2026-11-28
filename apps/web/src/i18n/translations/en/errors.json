@@ -30,7 +30,7 @@
   "library": {
     "noPastTasks": "The agent has no finished tasks to train on yet.",
     "notFound": "This agent or deep agent doesn't exist: it was deleted, closed to you, or the link is wrong.",
-    "unavailable": "The {kind, select, agent {agent} other {deep agent}} isn't available: it was deleted or closed to you",
+    "unavailable": "The {kind, select, agent {agent} skill {skill} other {deep agent}} isn't available: it was deleted or closed to you",
     "conflict": {
       "own": "You already saved changes in another window or in a chat.",
       "admin": "Changes were already saved in another window.",
@@ -38,7 +38,7 @@
       "adminFields": "Changes were already saved in another window. Changed there: {fields}.",
       "script": "The agent was changed while you were editing. Reload the card and make the edit again."
     },
-    "nameTaken": "You already have {kind, select, agent {an agent} other {a deep agent}} “{name}”",
+    "nameTaken": "You already have {kind, select, agent {an agent} skill {a skill} other {a deep agent}} “{name}”",
     "systemName": "That's the name of a company agent — choose another name",
     "serverNotAllowed": "No access to the {server} system — remove it",
     "modelNotAllowed": "The {model} model isn't available to you — choose another",

@@ -329,7 +329,11 @@ function EmployeeAudience({ record, name, onDone }: AudienceFormProps) {
             kind={record.kind}
             offer={offer}
             onChange={setOffer}
-            consequence={t('share.consequence', { kind: record.kind })}
+            consequence={
+              record.kind === 'skill'
+                ? t('share.consequenceSkill')
+                : t('share.consequence', { kind: record.kind })
+            }
           />
         )}
       </fieldset>
@@ -661,7 +665,12 @@ function Delivery({
 }) {
   const t = useTranslations('library');
   const options: readonly AdminRadioOption<DeliveryValue>[] = [
-    { value: 'chat', label: t('share.offer', { kind }) },
+    {
+      value: 'chat',
+      // agent-guidance MC-13: a skill is read by the chat, not started.
+      label:
+        kind === 'skill' ? t('share.offerSkill') : t('share.offer', { kind }),
+    },
     { value: 'library', label: t('share.libraryOnly') },
   ];
   return (

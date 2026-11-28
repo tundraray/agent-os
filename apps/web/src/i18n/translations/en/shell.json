@@ -142,7 +142,7 @@
     "openInLibrary": "Open in library",
     "emptyTitle": "The diagram appears here",
     "emptyHint": "Ask the chat to create or show an agent — its diagram appears here.",
-    "gone": "{kind, select, agent {Agent} other {Deep agent}} “{name}” was deleted or closed to you",
+    "gone": "{kind, select, agent {Agent} skill {Skill} other {Deep agent}} “{name}” was deleted or closed to you",
     "loadError": "Couldn't load the diagram",
     "retry": "Try again",
     "runTitle": "Progress and outcome",

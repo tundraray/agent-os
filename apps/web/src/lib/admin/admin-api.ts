@@ -14,6 +14,7 @@ import {
   ModelDefaultsSchema,
   ModelProviderCheckSchema,
   ModelProviderViewSchema,
+  OrganisationInstructionsSchema,
   ProviderListSchema,
   ProviderViewSchema,
   RecordDetailSchema,
@@ -49,6 +50,7 @@ import {
   type ModelDefaults,
   type ModelProviderCheck,
   type ModelProviderView,
+  type OrganisationInstructions,
   type ProviderList,
   type ProviderView,
   type RecordDetail,
@@ -73,6 +75,7 @@ import {
   type UpdateMcpToolBody,
   type UpdateModelDefaultsBody,
   type UpdateModelProviderBody,
+  type UpdateOrganisationInstructionsBody,
   type UpdateProviderBody,
   type UpdateRecordBody,
   type UpdateRoleBody,
@@ -533,6 +536,23 @@ const toolResults = {
     }),
 };
 
+/** «Инструкция для агентов» (agent-guidance design-web.md, KD-4): the organisation's one text. */
+const instructions = {
+  get: (): Promise<OrganisationInstructions> =>
+    apiRequest({
+      path: apiPath('instructions'),
+      schema: OrganisationInstructionsSchema,
+    }),
+  /** An empty text clears the instruction; the answer is the saved text. */
+  save: (text: string): Promise<OrganisationInstructions> =>
+    apiRequest({
+      path: apiPath('instructions'),
+      method: 'PUT',
+      body: { text } satisfies UpdateOrganisationInstructionsBody,
+      schema: OrganisationInstructionsSchema,
+    }),
+};
+
 export const adminApi = {
   users,
   roles,
@@ -546,4 +566,5 @@ export const adminApi = {
   library,
   selfLearning,
   toolResults,
+  instructions,
 };
